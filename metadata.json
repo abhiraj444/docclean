@@ -1,0 +1,6 @@
+{
+  "name": "DocClean Inverse Optimizer & Batch Restorer",
+  "description": "Document quality analyzer and inverse image processing parameter optimizer for batch PDF and multi-image restoration, illumination flattening, background whitening, and toner-saving inversion.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
