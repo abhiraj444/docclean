@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from 'react';
-import { X, FileText, FileArchive, Download, CheckCircle2, RefreshCw } from 'lucide-react';
+import { X, FileText, FileArchive, Download, CheckCircle2, RefreshCw, Cpu } from 'lucide-react';
 import { DocumentPage, BatchProgress } from '../types/document';
 import {
   exportAllPagesAsPdf,
@@ -17,6 +17,7 @@ import {
   loadImageElement,
 } from '../utils/pdfHandler';
 import { processDocumentImage } from '../utils/imageProcessor';
+import { getOptimalConcurrency } from '../utils/concurrency';
 
 interface BatchExportModalProps {
   isOpen: boolean;
@@ -56,7 +57,7 @@ export const BatchExportModal: React.FC<BatchExportModalProps> = ({
           setProgress({
             total,
             current,
-            status: `Rendering & vectorizing page ${current} of ${total}...`,
+            status: `Multi-core processing: page ${current} of ${total} vectorized...`,
             isExporting: true,
           });
         });
@@ -67,7 +68,7 @@ export const BatchExportModal: React.FC<BatchExportModalProps> = ({
           setProgress({
             total,
             current,
-            status: `Processing high-res image ${current} of ${total}...`,
+            status: `Multi-core processing: image ${current} of ${total} compressed...`,
             isExporting: true,
           });
         });
@@ -113,9 +114,15 @@ export const BatchExportModal: React.FC<BatchExportModalProps> = ({
               <Download className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Export Cleaned Document</h3>
-              <p className="text-xs text-neutral-400">
-                Packaging {pages.length} {pages.length === 1 ? 'page' : 'pages'} with inverse settings applied
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white">Export Cleaned Document</h3>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  <Cpu className="w-3 h-3" />
+                  <span>{getOptimalConcurrency()} Cores Active</span>
+                </span>
+              </div>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Packaging {pages.length} {pages.length === 1 ? 'page' : 'pages'} with multi-threaded hardware acceleration
               </p>
             </div>
           </div>

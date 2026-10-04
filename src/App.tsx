@@ -17,6 +17,14 @@ import { processDocumentImage } from './utils/imageProcessor';
 import { calculateRecommendedSettings, generateCandidatePresets } from './utils/optimizer';
 import { analyzeDocumentImage } from './utils/analyzer';
 import { DocumentCorners, propagateCropPriorToImage } from './utils/cropDetector';
+import {
+  runConcurrentTasks,
+  getOptimalConcurrency,
+  getUserConcurrency,
+  setUserConcurrency,
+  getSystemCores,
+} from './utils/concurrency';
+import { Cpu, AlertCircle, CheckCircle, Info, X } from 'lucide-react';
 
 export default function App() {
   // Empty by default - shows only clean upload screen at first!
@@ -32,6 +40,16 @@ export default function App() {
 
   // Active parameter feedback HUD shown on the preview when dragging sliders
   const [activeParamHUD, setActiveParamHUD] = useState<{ name: string; value: string } | null>(null);
+
+  // In-app notification toast (non-blocking, iframe-safe)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const showNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((curr) => (curr?.message === message ? null : curr));
+    }, 4500);
+  }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const renderTimeoutRef = useRef<number | null>(null);
@@ -118,34 +136,47 @@ export default function App() {
     handleSettingsChange(recommended);
   };
 
-  // Apply Current Settings to ALL Pages in the Batch
+  // Apply Current Settings to ALL Pages in the Batch concurrently
   const handleApplySettingsToAll = async () => {
     if (!activePage || pages.length <= 1) return;
 
     const sourceSettings = { ...activePage.currentSettings };
     setIsBatchLoading(true);
-    setBatchStatusMessage('Applying inverse settings to all pages...');
+    const concurrency = getUserConcurrency();
+    setBatchStatusMessage(`Applying settings to ${pages.length} pages in parallel (${concurrency} cores)...`);
 
-    const updatedPages = await Promise.all(
-      pages.map(async (page) => {
-        const img = await loadImageElement(page.sourceUrl);
-        const { dataUrl: processedThumbnailUrl } = await processDocumentImage(
-          img,
-          sourceSettings,
-          page.rotation,
-          350
-        );
+    try {
+      const updatedPages = await runConcurrentTasks(
+        pages,
+        async (page) => {
+          const img = await loadImageElement(page.sourceUrl);
+          const { dataUrl: processedThumbnailUrl } = await processDocumentImage(
+            img,
+            sourceSettings,
+            page.rotation,
+            350
+          );
 
-        return {
-          ...page,
-          currentSettings: { ...sourceSettings },
-          processedThumbnailUrl,
-        };
-      })
-    );
+          return {
+            ...page,
+            currentSettings: { ...sourceSettings },
+            processedThumbnailUrl,
+          };
+        },
+        (completed, total) => {
+          setBatchStatusMessage(`Applying inverse settings (${completed}/${total} pages ready)...`);
+        },
+        concurrency
+      );
 
-    setPages(updatedPages);
-    setIsBatchLoading(false);
+      setPages(updatedPages);
+      showNotification(`Applied settings across all ${pages.length} pages`, 'success');
+    } catch (err) {
+      console.error('Batch settings apply error:', err);
+      showNotification('Failed to apply settings to all pages', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
   };
 
   // Load a Test Sample Document
@@ -158,19 +189,21 @@ export default function App() {
       const newPage = await createPageFromCanvas(canvas, sample.name, 1);
       setPages([newPage]);
       setActivePageIndex(0);
+      showNotification(`Loaded ${sample.name}`, 'info');
     } catch (err) {
       console.error('Failed to load sample:', err);
+      showNotification('Failed to load sample document', 'error');
     } finally {
       setIsBatchLoading(false);
     }
   };
 
-  // Handle uploaded files (PDF or Images)
+  // Handle uploaded files (PDF or Images) with parallel processing
   const handleFilesSelected = async (files: File[]) => {
     if (!files || files.length === 0) return;
 
     setIsBatchLoading(true);
-    setBatchStatusMessage(`Processing ${files.length} file(s)...`);
+    setBatchStatusMessage(`Processing ${files.length} file(s) with multi-core acceleration...`);
 
     try {
       const newPages = await loadDocumentFiles(files, (msg) => {
@@ -180,10 +213,16 @@ export default function App() {
       if (newPages.length > 0) {
         setPages((prev) => [...prev, ...newPages]);
         setActivePageIndex(pages.length);
+        showNotification(`Loaded ${newPages.length} page(s) successfully`, 'success');
+      } else {
+        showNotification('No readable pages found in selected file(s)', 'error');
       }
     } catch (err) {
       console.error('File load error:', err);
-      alert('Could not load files: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      showNotification(
+        `Failed to open file: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        'error'
+      );
     } finally {
       setIsBatchLoading(false);
     }
@@ -202,7 +241,7 @@ export default function App() {
     }
   };
 
-  // Handle Crop & Straighten with Learned User Prior & Batch Propagation
+  // Handle Crop & Straighten with Learned User Prior & Multi-Threaded Batch Propagation
   const handleApplyCrop = async (
     croppedCanvas: HTMLCanvasElement,
     applyToAll: boolean,
@@ -212,21 +251,31 @@ export default function App() {
 
     if (applyToAll && pages.length > 1) {
       setIsBatchLoading(true);
-      setBatchStatusMessage(`Propagating learned boundary crop across ${pages.length} pages...`);
+      const concurrency = getUserConcurrency();
+      setBatchStatusMessage(`Straightening & cropping ${pages.length} pages in parallel (${concurrency} cores)...`);
 
       try {
-        const updatedPages = await Promise.all(
-          pages.map(async (p, idx) => {
+        const updatedPages = await runConcurrentTasks(
+          pages,
+          async (p, idx) => {
             let canvas = croppedCanvas;
             if (idx !== activePageIndex) {
               const pageImg = await loadImageElement(p.sourceUrl);
-              canvas = propagateCropPriorToImage(pageImg, corners);
+              canvas = await propagateCropPriorToImage(pageImg, corners);
             }
 
             const croppedUrl = canvas.toDataURL('image/jpeg', 0.95);
             const { metrics, reasons } = analyzeDocumentImage(canvas);
             const suggested = calculateRecommendedSettings(metrics);
             const candidates = generateCandidatePresets(metrics, suggested);
+
+            // Thumbnail
+            const { dataUrl: processedThumbnailUrl } = await processDocumentImage(
+              canvas,
+              suggested,
+              0,
+              350
+            );
 
             return {
               ...p,
@@ -239,13 +288,23 @@ export default function App() {
               suggestedSettings: suggested,
               currentSettings: { ...suggested },
               candidates,
+              processedThumbnailUrl,
             };
-          })
+          },
+          (completed, total) => {
+            setBatchStatusMessage(`Straightened & cropped ${completed}/${total} pages...`);
+          },
+          concurrency
         );
 
         setPages(updatedPages);
+        if (updatedPages[activePageIndex]) {
+          setProcessedImageUrl(updatedPages[activePageIndex].sourceUrl);
+        }
+        showNotification(`Propagated learned crop to all ${pages.length} pages`, 'success');
       } catch (err) {
         console.error('Batch crop error:', err);
+        showNotification('Failed to complete batch crop operation', 'error');
       } finally {
         setIsBatchLoading(false);
       }
@@ -276,6 +335,7 @@ export default function App() {
             : p
         )
       );
+      showNotification('Page cropped and straightened', 'success');
     }
   };
 
@@ -355,11 +415,51 @@ export default function App() {
 
       {/* Batch Processing Overlay */}
       {isBatchLoading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs select-none">
-          <div className="p-6 rounded-2xl bg-neutral-900 border border-neutral-800 shadow-2xl flex flex-col items-center gap-3 max-w-sm text-center">
-            <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
-            <span className="text-sm font-semibold text-white">Processing Document</span>
-            <p className="text-xs text-neutral-400">{batchStatusMessage}</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs select-none">
+          <div className="p-6 rounded-2xl bg-neutral-900 border border-neutral-800 shadow-2xl flex flex-col items-center gap-3.5 max-w-sm text-center">
+            <div className="relative flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+              <Cpu className="w-4 h-4 text-indigo-400 absolute" />
+            </div>
+            <div>
+              <span className="text-sm font-semibold text-white block">Multi-Core Processing</span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-400/90 mt-0.5">
+                <span>Parallel Acceleration Active</span>
+              </span>
+            </div>
+            <p className="text-xs text-neutral-300 bg-neutral-950 px-3 py-1.5 rounded-lg border border-neutral-800/80 max-w-xs">
+              {batchStatusMessage}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Notification Toast */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 max-w-md animate-in fade-in slide-in-from-top-2 duration-200">
+          <div
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border shadow-xl text-xs font-medium backdrop-blur-md ${
+              toast.type === 'success'
+                ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
+                : toast.type === 'error'
+                ? 'bg-rose-950/90 border-rose-500/40 text-rose-200'
+                : 'bg-neutral-900/90 border-neutral-700/60 text-neutral-200'
+            }`}
+          >
+            {toast.type === 'success' ? (
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : toast.type === 'error' ? (
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            ) : (
+              <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+            )}
+            <span className="flex-1">{toast.message}</span>
+            <button
+              onClick={() => setToast(null)}
+              className="p-1 text-neutral-400 hover:text-white rounded-md transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}

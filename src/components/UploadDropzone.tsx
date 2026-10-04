@@ -4,8 +4,9 @@
  */
 
 import React, { useRef } from 'react';
-import { UploadCloud, FileText, Sparkles } from 'lucide-react';
+import { UploadCloud, FileText, Sparkles, Cpu } from 'lucide-react';
 import { SAMPLE_DOCUMENTS, SampleDocMeta } from '../utils/sampleDocuments';
+import { getOptimalConcurrency } from '../utils/concurrency';
 
 interface UploadDropzoneProps {
   onFilesSelected: (files: File[]) => void;
@@ -48,9 +49,15 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
 
       <div className="w-full max-w-xl flex flex-col items-center text-center space-y-6">
         {/* Brand Kicker */}
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neutral-900 border border-neutral-800 text-xs font-medium text-neutral-300">
-          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Document Quality & Inverse Optimizer</span>
+        <div className="flex items-center gap-2 flex-wrap justify-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neutral-900 border border-neutral-800 text-xs font-medium text-neutral-300">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Document Quality & Inverse Optimizer</span>
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-950/40 border border-indigo-500/30 text-[11px] font-medium text-indigo-300">
+            <Cpu className="w-3 h-3 text-indigo-400" />
+            <span>Multi-Core Engine ({getOptimalConcurrency()} Threads)</span>
+          </div>
         </div>
 
         <div>
@@ -78,7 +85,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
               Drag & drop your PDF or images here
             </p>
             <p className="text-xs text-neutral-400 mt-1">
-              Supports multi-page PDF documents, JPG, PNG, and WebP
+              Supports multi-page PDF documents with parallel multi-core rendering, JPG, PNG, and WebP
             </p>
           </div>
 

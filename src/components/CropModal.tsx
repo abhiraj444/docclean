@@ -42,6 +42,7 @@ export const CropModal: React.FC<CropModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [applyToAllPages, setApplyToAllPages] = useState(false);
   const [hasAdjusted, setHasAdjusted] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -170,14 +171,19 @@ export const CropModal: React.FC<CropModalProps> = ({
   // Apply crop & homography unwarp
   const handleApply = async () => {
     setIsProcessing(true);
+    setErrorMessage(null);
     try {
       const img = imgRef.current || (await loadImageElement(sourceImageUrl));
-      const croppedCanvas = warpAndCropDocument(img, corners);
+      const croppedCanvas = await warpAndCropDocument(img, corners);
       onApplyCrop(croppedCanvas, applyToAllPages, corners);
       onClose();
     } catch (err) {
       console.error('Failed to crop image:', err);
-      alert('Unable to crop document. Please adjust corner pins and try again.');
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : 'Unable to crop document. Please adjust corner pins and try again.'
+      );
     } finally {
       setIsProcessing(false);
     }
@@ -408,6 +414,13 @@ export const CropModal: React.FC<CropModalProps> = ({
             )}
           </div>
         </div>
+
+        {errorMessage && (
+          <div className="px-6 py-2 bg-red-950/80 border-t border-red-800/80 text-red-300 text-xs flex items-center justify-between">
+            <span>{errorMessage}</span>
+            <button onClick={() => setErrorMessage(null)} className="text-red-400 hover:text-white ml-2">✕</button>
+          </div>
+        )}
 
         {/* Footer Actions */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-neutral-800 bg-neutral-900 shrink-0">
